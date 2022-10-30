@@ -1,17 +1,29 @@
-use std::{fs, io::{Cursor, Error}};
+use std::{
+    fs,
+    io::{Cursor, Error},
+};
 mod cmd;
-
-use pulldown_cmark::{Event, Tag, HeadingLevel, html};
+use clap::{crate_description, crate_name, Command};
+use pulldown_cmark::{html, Event, HeadingLevel, Tag};
 
 #[derive(Debug)]
 struct TocEntry {
-    slug:String,
-    text:String
+    slug: String,
+    text: String,
 }
 
 type Toc = Vec<TocEntry>;
 
-fn main() -> Result<() , Error> {
+fn main() -> Result<(), Error> {
+    let command = create_clap_command();
+    let res = match command.get_matches().subcommand() {
+        Some(("watch", submatches)) => cmd::watch::execute(submatches), 
+        _ => unreachable!()
+    };
+
+    if let Err(e) = res {
+        println!("Error: {}", e);
+    }
     let contents = fs::read_to_string("file.md")?;
 
     let output = process_markdown_to_html(contents);
@@ -19,32 +31,38 @@ fn main() -> Result<() , Error> {
     Ok(())
 }
 
+fn create_clap_command() -> Command {
+    let command = Command::new(crate_name!())
+        .about(crate_description!())
+        .subcommand(cmd::watch::make_subcommand());
+    command
+}
 
-fn process_markdown_to_html(markdown:String) -> String {
+fn process_markdown_to_html(markdown: String) -> String {
     let parser = pulldown_cmark::Parser::new(&markdown);
-    
+
     let mut toc: Toc = Vec::new();
     let mut output: Vec<u8> = Vec::new();
 
     struct Heading {
         level: HeadingLevel,
-        plain_text: String
+        plain_text: String,
     }
 
     let mut current_heading: Option<Heading> = None;
 
     let stream = parser.map(|event| {
         match &event {
-            Event::Start(Tag::Heading(heading_level,_ ,_ )) => {
+            Event::Start(Tag::Heading(heading_level, _, _)) => {
                 current_heading = Some(Heading {
                     // TODO: Need to understand why this needs
                     // deferencing
-                    level:*heading_level, 
-                    plain_text: "".into()
+                    level: *heading_level,
+                    plain_text: "".into(),
                 });
-                return Event::Text("".into());       
-            }, 
-            Event::End(Tag::Heading(_, _,_ )) => {
+                return Event::Text("".into());
+            }
+            Event::End(Tag::Heading(_, _, _)) => {
                 if let Some(heading) = current_heading.take() {
                     let tag = match heading.level {
                         HeadingLevel::H1 => "h1",
@@ -58,52 +76,54 @@ fn process_markdown_to_html(markdown:String) -> String {
                     let header = heading.plain_text.clone();
                     let toc_entry = TocEntry {
                         text: heading.plain_text,
-                        slug: anchor.clone()
+                        slug: anchor.clone(),
                     };
 
                     toc.push(toc_entry);
-                    return Event::Html(format!(
-                    r#"
+                    return Event::Html(
+                        format!(
+                            r#"
             <{tag} class="heading">
                     {header}
             </{tag}> 
-                    "#).into())
-
+                    "#
+                        )
+                        .into(),
+                    );
                 }
-            },
+            }
             Event::Text(text) => {
                 if let Some(current) = current_heading.as_mut() {
                     current.plain_text.push_str(text);
-                    return Event::Text("".into())
+                    return Event::Text("".into());
                 }
             }
             _ => {}
         }
         event
     });
-  html::write_html(Cursor::new(&mut output), stream).unwrap();
-  toc.into_iter().for_each(|item| {
-      let title = item.text;
-      let link = item.slug;
-      println!(
-        r#"
+    html::write_html(Cursor::new(&mut output), stream).unwrap();
+    toc.into_iter().for_each(|item| {
+        let title = item.text;
+        let link = item.slug;
+        println!(
+            r#"
             <li class="item">
                 <a href='#{link}'>
                     {title}
                 </a>
             </li> 
-        "#);
-  });
+        "#
+        );
+    });
 
-
-  match String::from_utf8(output) {
-    Ok(html) => html,
-    Err(e) => e.to_string(),
-  }
+    match String::from_utf8(output) {
+        Ok(html) => html,
+        Err(e) => e.to_string(),
+    }
 }
 
-fn slugify(input:&str) -> String {
-    let slug = input.to_ascii_lowercase().replace(" ","_");
+fn slugify(input: &str) -> String {
+    let slug = input.to_ascii_lowercase().replace(" ", "_");
     return slug;
 }
-
